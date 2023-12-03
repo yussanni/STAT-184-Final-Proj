@@ -1,0 +1,240 @@
+---
+title: "Final Project Report"
+author: "Ga Ryoung Lee, Evan Chen, Yusrat Sanni"
+date: "Due Date: December 10, 2023"
+output: 
+    html_notebook:
+    fig_height: 6
+    fig_width: 10
+---
+
+# Research Question
+
+"How does land area within a state influence the income tax trends of the state?"
+
+# Data Source
+
+```{r}
+
+library(dplyr)
+library(dcData)
+library(mosaic)
+library(tidyverse)
+
+#install.packages(c('maps', 'mapdata', 'usdata')) ## For California example
+library(usdata)
+library(maps)
+library(mapdata)
+
+
+Tax2014 <- read.csv("https://www.irs.gov/pub/irs-soi/14zpallagi.csv") # Primary data
+Tax2014
+View(ZipGeography) # Secondary data
+```
+
+# Inspecting data intake
+
+```{r}
+names(Tax2014)
+head(Tax2014)
+favstats(~A06500, data = Tax2014) # a06500 = income tax amount
+str(Tax2014)
+
+names(ZipGeography)
+head(ZipGeography)
+str(ZipGeography)
+```
+
+# Data Wrangling
+
+```{r}
+ZipGeography <-
+  ZipGeography %>%
+  mutate(ZIP = as.numeric(ZIP))
+
+narrow_table <-
+  Tax2014 %>%
+  pivot_longer(cols = c('mars1', 'MARS2', "MARS4"),
+                names_to = "typeofhouseholdreturns",
+                values_to = "numberofhouseholdreturns") # made the table narrower
+
+narrow_table
+
+JoinedTax2014 <- 
+  narrow_table %>%
+  left_join(ZipGeography, by = c("zipcode" = "ZIP")) %>%
+  filter(zipcode != 0) # eliminate error in zipcode
+
+JoinedTax2014 # joined table with corresponding zipcode
+```
+
+```{r}
+RevisedJoinedTax2014 <-
+  JoinedTax2014 %>%
+  group_by(STATE) %>%
+  summarise(STATE = STATE,
+            zipcode = zipcode,
+            agi_stub = agi_stub, # agi_stub = scale of income (1 to 6)
+            incometax = A06500,
+            averagestateincometax = mean(incometax),
+            minincometax = min(incometax),
+            maxincometax = max(incometax),
+            rangeincometax = maxincometax - minincometax,
+            Population = Population,
+            HousingUnits = HousingUnits,
+            CityName = CityName,
+            County = County,
+            AreaCode = AreaCode,
+            LandArea = LandArea,
+            WaterArea = WaterArea,
+            TypeofHouseholdReturns = typeofhouseholdreturns,
+            NumberofHouseholdReturns = numberofhouseholdreturns) 
+
+RevisedJoinedTax2014 # Revised table with useful variables
+```
+
+```{r}
+regressMod <- lm(Population ~ zipcode + incometax, data = RevisedJoinedTax2014)
+regressMod$coefficients 
+summary(regressMod)
+```
+
+# Data Visualization
+
+For our information, these are the average income taxes each state residents paid in 2014. Residents in California, New York, and Texas pays the highest income tax on average and residents in Vermont and Wyoming pays the lowest income tax on average. Our research question attempts to find the trend of these income taxes.
+
+```{r}
+data <-
+  RevisedJoinedTax2014 %>%
+  summarise(State = STATE,
+            IncomeTax = mean(incometax),
+            agi_stub = agi_stub)
+
+data %>%
+  ggplot(aes(x = State, y = IncomeTax)) +
+  geom_bar(aes(x = reorder(State, -IncomeTax), color = State, fill = State), stat = "identity")
+```
+
+We suspect that the population variable have some correlation to both land area and income tax, so the following three graphs attempt to draw that correlation in response to our research question.
+
+This graph illustrates the correlation between land area of a state and its population. We can see a weak negative correlation between the two variables.
+
+```{r}
+Graph1data <-
+  RevisedJoinedTax2014 %>%
+  summarise(LandArea = mean(LandArea, na.rm = TRUE),
+            Population = mean(Population, na.rm = TRUE))
+
+Graph1data
+
+
+Graph1data %>%
+  ggplot(aes(x = LandArea, y = Population)) +
+  geom_point(aes(color = STATE)) +
+  geom_smooth()
+```
+
+This Graph shows that bigger the population, higher the tax rate - meaning that people who live in bigger cities tend to pay more tax.
+
+```{r}
+Graph2data <-
+  RevisedJoinedTax2014 %>%
+  summarise(IncomeTax = mean(incometax, na.rm = TRUE),
+            Population = mean(Population, na.rm = TRUE))
+
+Graph2data
+
+Graph2data %>%
+  ggplot(aes(x = Population, y = IncomeTax)) +
+  geom_point(aes(color = STATE), stat = "identity") 
+```
+
+Our fourth graph tells us that bigger land areas are associated to lower income taxes.
+
+```{r}
+RevisedJoinedTax2014 %>%
+  ggplot(aes(x = LandArea, y = incometax)) +
+  geom_point(aes(color = STATE)) +
+  facet_wrap(~ agi_stub, scales = "free_y",
+             labeller = label_both) 
+```
+
+Let's take a look at an example in California, a state with one of the highest income taxes. The graph below shows the relationship between land area and Average Income Tax in different counties of California.
+
+```{r}
+california_counties <- map_data("county", region = "California")
+
+
+california_counties <- 
+  california_counties %>%
+  mutate(region = tools::toTitleCase(region)) %>%
+  mutate(subregion = tools::toTitleCase(subregion)) %>%
+  rename("State" = "region",
+         "County" = "subregion")
+
+Test <- 
+  JoinedTax2014 %>%
+  filter(STATE == "CA")
+
+Test2 <- left_join(Test, california_counties, by = "County")
+
+Test2 <- na.omit(Test2)
+
+Yeah <- Test2 %>%
+  group_by(County) %>%
+  summarize(Average = mean(A06500, na.rm = TRUE))
+
+Test3 <- left_join(Yeah, california_counties, by = "County")
+
+Test3 <-
+  Test3 %>%
+  select(County, Average, long, lat, group, State)
+
+land_area_data <- county_complete
+
+Test5 <-
+  county_complete %>%
+  filter(state == "California") %>%
+  select(state, name, area_2010)
+
+Test5$name <- gsub(" County", "", Test5$name)
+
+Test5 <-
+  Test5 %>%
+    rename("State" = "state",
+         "County" = "name",
+         "Area" = "area_2010")
+
+Test6 <- left_join(Test5, Test3, by = "County")
+
+Test7 <-
+  Test6 %>%
+  distinct(County, .keep_all = TRUE)
+
+Test7 <-
+  Test7 %>%
+  select(County, Area, Average, long, lat, group, State.y) %>%
+  rename("State" = "State.y")
+
+ggplot(Test7, aes(x = Area, y = Average)) +
+  geom_point(aes(color = County)) +
+  labs(title = "Relationship between Average Income Tax and Land Area in California",
+       x = "Land Area (sq mi)",
+       y = "Average Income Tax")
+```
+
+If we were to map the density in a county map, our general conclusion would be proved in that counties with less land area tend to have higher income taxes.
+
+```{r}
+ggplot(Test6, aes(x = long, y = lat, group = group, fill = Average)) +
+  geom_polygon(color = "white", size = 0.5) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", name = "Average Income Tax") +
+  labs(title = "Map of the Density of Average Income Tax in California")
+  
+```
+
+#Conlusion
+
+From the graphs above, we can see the weak negative correlation between land area of a state and its population. This is likely due to overpopulation in major states like New York and the opposite in states like Wyoming. Our next graph shows a strong positive correlation between population and income tax of each states. This is due to bigger cities having better infrastructures and higher cost of living. Our last graph shows the correlation between land area and the income tax (our research question). We can see a negative correlation which means that bigger land area is associated with lower income tax.
+
+With the information given above, we can conclude that bigger land area is correlated with lower income tax and vice versa. This is because the states with large areas are located in the middle of country and face geological constraints like the Rocky Mountain. Thus, states with large areas tend to have smaller population and poor infrastructure. This leads to lower cost of living and lower tax rate for those states which directly effect the average income tax. With this in mind, we successfully concluded that large land area of state correlates with lower income tax.
